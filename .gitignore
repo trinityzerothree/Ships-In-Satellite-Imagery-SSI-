@@ -2,7 +2,7 @@
 .env
 .vscode
 
-venv
+.venv
 data
 __pycache__
 
