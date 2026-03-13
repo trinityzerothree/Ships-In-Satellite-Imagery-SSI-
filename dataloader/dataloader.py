@@ -79,6 +79,7 @@ def load_shipsnet(
     seed: int = 42,
     num_workers: int = 0,
     transform=None,
+    eval_transform=None,
     use_rotation_augmentation: bool = False,
 ):
     """Download (if needed) and load shipsnet, returning train/val/test DataLoaders.
@@ -91,7 +92,8 @@ def load_shipsnet(
         test_ratio: Fraction of data for testing.
         seed: Random seed for reproducible splits.
         num_workers: Workers for DataLoader.
-        transform: Optional transform applied to each image tensor.
+        transform: Optional transform applied to training images.
+        eval_transform: Optional transform applied to val/test images. If None, no transform is applied.
         use_rotation_augmentation: If True, apply random 90° rotation to training images.
 
     Returns:
@@ -117,8 +119,9 @@ def load_shipsnet(
             return image
         transform = augment_transform
 
-    dataset = ShipsDataset(data, labels, transform=transform)
-    indices = list(range(len(dataset)))
+    train_dataset = ShipsDataset(data, labels, transform=transform)
+    eval_dataset = ShipsDataset(data, labels, transform=eval_transform)
+    indices = list(range(len(train_dataset)))
 
     # First split: train vs (val + test), stratified by label
     train_idx, valtest_idx = train_test_split(
@@ -133,13 +136,13 @@ def load_shipsnet(
     )
 
     train_loader = DataLoader(
-        Subset(dataset, train_idx), batch_size=batch_size, shuffle=True, num_workers=num_workers
+        Subset(train_dataset, train_idx), batch_size=batch_size, shuffle=True, num_workers=num_workers
     )
     val_loader = DataLoader(
-        Subset(dataset, val_idx), batch_size=batch_size, shuffle=False, num_workers=num_workers
+        Subset(eval_dataset, val_idx), batch_size=batch_size, shuffle=False, num_workers=num_workers
     )
     test_loader = DataLoader(
-        Subset(dataset, test_idx), batch_size=batch_size, shuffle=False, num_workers=num_workers
+        Subset(eval_dataset, test_idx), batch_size=batch_size, shuffle=False, num_workers=num_workers
     )
 
     print(f"Train: {len(train_idx)} | Val: {len(val_idx)} | Test: {len(test_idx)}")

@@ -29,7 +29,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Device:", device)
 
-    train_loader, val_loader, test_loader = load_shipsnet(transform=train_transform())
+    train_loader, val_loader, test_loader = load_shipsnet(transform=train_transform(), eval_transform=None)
 
     model = BasicCNN().to(device)
     loss_fn = nn.CrossEntropyLoss()
