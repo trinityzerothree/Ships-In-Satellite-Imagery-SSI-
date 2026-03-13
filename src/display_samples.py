@@ -1,11 +1,12 @@
 import matplotlib.pyplot as plt
 import torch
-from dataloader import load_shipsnet, rotate_4_directions
+from dataloader.dataloader import load_shipsnet
+from src.augmentations import rotate_4_directions
 
 
 def display_samples():
     train_loader, val_loader, test_loader = load_shipsnet(
-        use_rotation_augmentation=True, num_workers=0
+        offline_augmentation=True, num_workers=0
     )
 
     images, labels = next(iter(train_loader))
