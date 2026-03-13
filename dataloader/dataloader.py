@@ -3,31 +3,14 @@ import os
 import numpy as np
 import opendatasets as od
 import torch
-import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, Subset
 from sklearn.model_selection import train_test_split
-import random
 
 KAGGLE_URL = "https://www.kaggle.com/datasets/rhammell/ships-in-satellite-imagery"
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 JSON_FILENAME = "shipsnet.json"
 BATCH_SIZE = 32
 
-
-def rotate_4_directions(image: torch.Tensor) -> torch.Tensor:
-    """Rotate image in all 4 directions (0°, 90°, 180°, 270°) and stack them.
-    
-    Args:
-        image: Input image tensor of shape (C, H, W).
-        
-    Returns:
-        Stacked tensor of shape (4, C, H, W) containing all 4 rotations.
-    """
-    rotations = []
-    for k in range(4):
-        rotated = torch.rot90(image, k, dims=[1, 2])
-        rotations.append(rotated)
-    return torch.stack(rotations)
 
 def _download_dataset(data_dir: str) -> str:
     """Download the dataset from Kaggle if not already present. Returns path to shipsnet.json."""
@@ -61,8 +44,8 @@ class ShipsDataset(Dataset):
 
     def __getitem__(self, idx):
         # Reshape flat pixel array to (3, 80, 80) and normalize to [0, 1]
-        image = np.array(self.data[idx], dtype=np.float32).reshape(3, 80, 80) / 255.0
-        label = self.labels[idx]
+        image = self.data[idx].reshape(3, 80, 80) / 255.0
+        label = int(self.labels[idx])
 
         image = torch.from_numpy(image)
         if self.transform:
@@ -80,7 +63,9 @@ def load_shipsnet(
     num_workers: int = 0,
     transform=None,
     eval_transform=None,
-    use_rotation_augmentation: bool = False,
+    offline_augmentation: bool = False,
+    offline_rotations: bool = True,
+    offline_flips: bool = True,
 ):
     """Download (if needed) and load shipsnet, returning train/val/test DataLoaders.
 
@@ -94,7 +79,9 @@ def load_shipsnet(
         num_workers: Workers for DataLoader.
         transform: Optional transform applied to training images.
         eval_transform: Optional transform applied to val/test images. If None, no transform is applied.
-        use_rotation_augmentation: If True, apply random 90° rotation to training images.
+        offline_augmentation: If True, expand training data with deterministic augmentations.
+        offline_rotations: Include 90°/180°/270° rotations in offline augmentation.
+        offline_flips: Include horizontal/vertical flips in offline augmentation.
 
     Returns:
         Tuple of (train_loader, val_loader, test_loader).
@@ -106,22 +93,11 @@ def load_shipsnet(
     with open(json_path) as f:
         raw = json.load(f)
 
-    data = raw["data"]
-    labels = raw["labels"]
+    data = np.array(raw["data"], dtype=np.float32)
+    labels = np.array(raw["labels"], dtype=np.int64)
+    del raw  # free the parsed JSON
 
-    if use_rotation_augmentation:
-        base_transform = transform
-        def augment_transform(image):
-            k = random.randint(0, 3)
-            image = torch.rot90(image, k, dims=[1, 2])
-            if base_transform:
-                image = base_transform(image)
-            return image
-        transform = augment_transform
-
-    train_dataset = ShipsDataset(data, labels, transform=transform)
-    eval_dataset = ShipsDataset(data, labels, transform=eval_transform)
-    indices = list(range(len(train_dataset)))
+    indices = list(range(len(data)))
 
     # First split: train vs (val + test), stratified by label
     train_idx, valtest_idx = train_test_split(
@@ -135,17 +111,35 @@ def load_shipsnet(
         valtest_idx, test_size=relative_test, random_state=seed, stratify=valtest_labels
     )
 
+    # Build training data (with optional offline augmentation)
+    train_data = data[train_idx]
+    train_labels = labels[train_idx]
+    if offline_augmentation:
+        from src.augmentations import expand_with_augmentations
+        train_data, train_labels = expand_with_augmentations(
+            train_data, train_labels, rotations=offline_rotations, flips=offline_flips
+        )
+    train_dataset = ShipsDataset(train_data, train_labels, transform=transform)
+
+    # Build eval datasets from original data only
+    val_data = data[val_idx]
+    val_labels = labels[val_idx]
+    test_data = data[test_idx]
+    test_labels = labels[test_idx]
+    val_dataset = ShipsDataset(val_data, val_labels, transform=eval_transform)
+    test_dataset = ShipsDataset(test_data, test_labels, transform=eval_transform)
+
     train_loader = DataLoader(
-        Subset(train_dataset, train_idx), batch_size=batch_size, shuffle=True, num_workers=num_workers
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers
     )
     val_loader = DataLoader(
-        Subset(eval_dataset, val_idx), batch_size=batch_size, shuffle=False, num_workers=num_workers
+        val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers
     )
     test_loader = DataLoader(
-        Subset(eval_dataset, test_idx), batch_size=batch_size, shuffle=False, num_workers=num_workers
+        test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers
     )
 
-    print(f"Train: {len(train_idx)} | Val: {len(val_idx)} | Test: {len(test_idx)}")
+    print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)} | Test: {len(test_dataset)}")
     return train_loader, val_loader, test_loader
 
 
